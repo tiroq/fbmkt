@@ -231,7 +231,7 @@ async def extract_details_from_item(page, listing: Listing, timeout_ms: int = 25
     try:
         await page.goto(listing.item_url, timeout=timeout_ms)
         await page.wait_for_selector(DETAIL_WAIT_SEL, timeout=timeout_ms)
-        await asyncio.sleep(1.0)
+        await asyncio.sleep(random.uniform(1.5, 3.0))
     except PlaywrightTimeout:
         return listing
 
@@ -254,7 +254,7 @@ async def extract_details_from_item(page, listing: Listing, timeout_ms: int = 25
             tx = clean_text(await nodes.nth(i).inner_text())
             if not tx or len(tx) > 200:
                 continue
-            m = re.match(r"([A-Za-zА-Яа-ЯёЁ\/\-\s]+):?\s+(.+)$", tx)
+            m = re.match(r"([A-Za-zА-Яа-яёЁ\/\-\s]+):?\s+(.+)$", tx)
             if m:
                 k = clean_text(m.group(1))
                 v = clean_text(m.group(2))
@@ -557,7 +557,7 @@ async def run_scrape(lat: float, lon: float, radius_km: int, query: Optional[str
         for u in urls:
             print(f">>> Opening catalog: {u}")
             await page.goto(u, timeout=120_000)
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(random.uniform(2.0, 4.0))
             batch = await scroll_and_collect(page, target_count=max_items, category_hint=category, source_url=u)
             for b in batch:
                 all_results[b.item_id] = b
@@ -573,7 +573,7 @@ async def run_scrape(lat: float, lon: float, radius_km: int, query: Optional[str
                     listings[i-1] = await extract_details_from_item(page, lst)
                 except Exception:
                     pass
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(random.uniform(0.8, 1.2))
 
         await context.close()
         await browser.close()
