@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+.venv/
+.env
+
+# Project data
+data/db/*.db
+data/auth/storage_state.json
+data/export/*
+exports/*
+
+# Byte-compiled / optimized / DLL files
+*.so
+*.dll
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
