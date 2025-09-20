@@ -2,3 +2,8 @@ fastapi
 uvicorn[standard]
 pydantic
 pandas
+
+# Development and testing
+pytest
+pytest-asyncio
+httpx
