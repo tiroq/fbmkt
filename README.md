@@ -11,13 +11,13 @@ This step includes: scraper code, dependencies, Dockerfile, and entrypoint.
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip3 install -r scraper/requirements.txt
-python3 -m playwright install
+pip install -r scraper/requirements.txt
+python -m playwright install
 
 # First run may require login to Facebook (in headful mode).
 # After logging in, return to the console and press Enter.
 
-python3 scraper/fb_marketplace_scraper.py   --lat 13.7563 --lon 100.5018 --radius-km 50   --category all --max-items 200 --details   --db data/db/fb_marketplace.db --out data/export.xlsx
+python scraper/fb_marketplace_scraper.py   --lat 13.7563 --lon 100.5018 --radius-km 50   --category all --max-items 200 --details   --db data/db/fb_marketplace.db --out data/export.xlsx
 ```
 
 ---
