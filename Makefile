@@ -1,25 +1,24 @@
-
 SHELL := /bin/bash
 
-.PHONY: build up down logs api scrape login-local
+.PHONY: build up down logs scrape api
 
 build:
-	docker compose build || true
+	docker compose build
 
-up:
-	docker compose up -d api || true
+up: ## start API (and keep volumes mounted)
+	docker compose up -d api
 
 down:
-	docker compose down || true
+	docker compose down
 
 logs:
-	docker compose logs -f --tail=200 || true
+	docker compose logs -f
 
-api:
-	@echo "Запустите вручную из каталога api/: uvicorn app:app --reload --port 8000"
+scrape: ## run one-off scraper (env from .env)
+	docker compose run --rm scraper
 
-scrape:
-	docker compose run --rm --env-file .env scraper || true
+api: ## run API in foreground
+	docker compose up api
 
-login-local:
-	@echo "Будет добавлено на шаге 5: tools/login_once.py"
+clean:
+	rm -rf data/db/*.db data/fbmkt.log || true
