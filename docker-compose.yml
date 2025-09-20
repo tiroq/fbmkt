@@ -24,6 +24,7 @@ services:
       - ./scraper:/app/scraper:ro
     working_dir: /app/scraper
     entrypoint: ["/bin/bash","-lc","/app/scraper/entrypoint.sh"]
+
   scheduler:
     image: alpine:3.20
     volumes:
