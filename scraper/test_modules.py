@@ -11,15 +11,20 @@ sys.path.insert(0, os.path.dirname(__file__))
 def test_imports():
     """Test that all modules can be imported successfully."""
     try:
-        from scraper import (
-            Listing, 
-            run_scrape,
-            db_connect, 
-            db_init,
-            init_logger,
-            now_iso,
-            export_new_since_run
-        )
+        # Import individual modules
+        import models
+        import utils
+        import database
+        import export
+        import core
+        
+        # Test specific imports
+        from models import Listing
+        from utils import init_logger, now_iso, parse_price
+        from database import db_connect, db_init
+        from export import export_new_since_run
+        from core import run_scrape
+        
         print("✅ All imports successful")
         return True
     except ImportError as e:
@@ -29,8 +34,8 @@ def test_imports():
 def test_basic_functionality():
     """Test basic functionality of key components."""
     try:
-        from scraper.utils import parse_price, clean_text, extract_first_number_km
-        from scraper.models import Listing
+        from utils import parse_price, clean_text, extract_first_number_km
+        from models import Listing
         
         # Test price parsing
         price, currency = parse_price("฿150,000")

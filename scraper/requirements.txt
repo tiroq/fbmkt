@@ -1,3 +1,7 @@
 playwright
 pandas
 openpyxl
+
+# Development and testing dependencies
+pytest
+pytest-asyncio
