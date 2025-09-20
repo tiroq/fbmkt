@@ -21,4 +21,7 @@ api: ## run API in foreground
 	docker compose up api
 
 clean:
-	rm -rf data/db/*.db data/fbmkt.log || true
+	@rm -rf data/fbmkt.log data/export.xlsx || true
+	@echo "Removed log and export files"
+	@echo "Are you sure you want to delete the database files? This cannot be undone! (y/N)"
+	@read -r confirm; if [[ $$confirm == [yY] ]]; then rm -rf data/db/*.db data/fbmkt.log || true; fi
