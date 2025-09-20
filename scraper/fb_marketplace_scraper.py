@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 import random
+import logging
 import re
 import sqlite3
 from dataclasses import dataclass, field
@@ -17,6 +18,35 @@ MARKETPLACE_BASE = "https://www.facebook.com/marketplace"
 STORAGE_STATE_FILE_DEFAULT = "storage_state.json"
 NO_GROWTH_SCROLLS_LIMIT = 4
 DETAIL_WAIT_SEL = "[data-pagelet='MarketplacePDP']"
+
+def init_logger(
+    name: str = "fbmkt",
+    console_level: str = "INFO",
+    file_level: str = "DEBUG",
+    log_file: Optional[str] = "fbmkt.log"
+) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    if logger.handlers:
+        return logger
+
+    console_level_num = getattr(logging, console_level.upper(), logging.INFO)
+    ch = logging.StreamHandler(); ch.setLevel(console_level_num)
+
+    fmt = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    ch.setFormatter(fmt)
+    logger.addHandler(ch)
+
+    if log_file:  # Create file handler only if log_file is provided
+        file_level_num = getattr(logging, file_level.upper(), logging.DEBUG)
+        fh = logging.FileHandler(log_file, encoding="utf-8")
+        fh.setLevel(file_level_num)
+        fh.setFormatter(fmt)
+        logger.addHandler(fh)
+
+    return logger
+
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -105,7 +135,8 @@ class Listing:
     price_currency: Optional[str] = None
 
 def build_urls(lat: float, lon: float, radius_km: int, query: Optional[str], category: str) -> List[str]:
-    params_geo = f"exact=false&latitude={lat}&longitude={lon}&radius_km={radius_km}"
+    # params_geo = f"exact=false&latitude={lat}&longitude={lon}&radius_km={radius_km}"
+    params_geo = f"exact=false&latitude={lat}&longitude={lon}&radius_km={radius_km}&locale=en_US"
     urls = []
     if category in ("vehicles", "all"):
         urls.append(f"{MARKETPLACE_BASE}/category/vehicles?{params_geo}")
@@ -120,10 +151,67 @@ def build_urls(lat: float, lon: float, radius_km: int, query: Optional[str], cat
             uniq.append(u); seen.add(u)
     return uniq
 
+async def ensure_marketplace_ready(page, timeout_ms: int = 15000) -> bool:
+    # попытка закрыть cookie/consent баннеры в разных локалях
+    selectors = [
+        "button:has-text('Allow all cookies')",
+        "button:has-text('Accept all')",
+        "button:has-text('Разрешить все')",
+        "button:has-text('Принять все')",
+        "div[role='dialog'] button:has-text('OK')",
+    ]
+    for sel in selectors:
+        try:
+            if await page.locator(sel).first.is_visible():
+                await page.locator(sel).first.click(timeout=2000)
+                break
+        except Exception:
+            pass
+
+    # wait for marketplace items to load
+    try:
+        await page.wait_for_selector("a[href*='/marketplace/item/']", timeout=timeout_ms, state="visible")
+        return True
+    except Exception:
+        return False
+
 async def extract_cards_on_page(page) -> List[Dict]:
     item_loc = page.locator("[data-testid='marketplace_feed_item']")
     count = await item_loc.count()
     raw = []
+    if count == 0:
+        # Fallback: прямой сбор якорей — DOM на FB часто меняется
+        anchors = page.locator("a[href*='/marketplace/item/']").filter(has_text=re.compile(r".+"))
+        ac = await anchors.count()
+        logger.info(f">>> Fallback: found {ac} anchors with /marketplace/item/")
+        for i in range(min(ac, 200)):
+            a = anchors.nth(i)
+            href = await a.get_attribute("href") or ""
+            # Пробуем извлечь текст для заголовка
+            title_guess = clean_text((await a.get_attribute("aria-label")) or (await a.inner_text()) or "")
+            # Ищем ближайшее изображение как thumbnail
+            thumb = ""
+            try:
+                img = a.locator("img")
+                if await img.count() > 0:
+                    src = await img.first.get_attribute("src")
+                    if src and src.startswith("http"):
+                        thumb = src
+            except Exception:
+                pass
+            if href:
+                raw.append({
+                    "href": href,
+                    "title_guess": title_guess[:220],
+                    "price_text": "",          # цена уточнится в деталях
+                    "location_text": "",
+                    "posted_text": "",
+                    "seller_text": "",
+                    "thumb": thumb
+                })
+        logger.info(f">>> Fallback produced {len(raw)} raw items")
+        return raw
+    logger.info(f">>> Found {count} item cards on the page")
     for i in range(count):
         it = item_loc.nth(i)
         href = ""
@@ -205,7 +293,20 @@ async def scroll_and_collect(page, target_count: int, category_hint: str, source
     results: List[Listing] = []
     no_growth = 0
     while len(results) < target_count:
-        await page.wait_for_load_state("networkidle")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=15_000)
+        except Exception:
+            # On heavy pages, networkidle may not occur — simplify waiting
+            await page.wait_for_load_state("domcontentloaded", timeout=15_000)
+            await asyncio.sleep(random.uniform(1.2, 2.5))
+        probe_cards = await page.locator("a[href*='/marketplace/item/']").count()
+        if probe_cards == 0:
+            for _ in range(3):
+                try:
+                    await page.evaluate("window.scrollBy(0, Math.min(1200, document.body.scrollHeight))")
+                except Exception:
+                    break
+                await asyncio.sleep(random.uniform(0.6, 1.0))
         raw_cards = await extract_cards_on_page(page)
         added = 0
         for r in raw_cards:
@@ -217,13 +318,18 @@ async def scroll_and_collect(page, target_count: int, category_hint: str, source
                 seen_ids.add(key)
                 results.append(listing)
                 added += 1
+                logger.debug(f"Found item: {listing.item_id} | {listing.title} | {listing.price_text} | {listing.location_text} | {listing.posted_text} | {listing.seller_text} | {listing.item_url}")
         if added == 0:
             no_growth += 1
         else:
             no_growth = 0
         if no_growth >= NO_GROWTH_SCROLLS_LIMIT:
             break
-        await page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+        try:
+            await page.evaluate("window.scrollBy(0, document.body.scrollHeight)")
+        except Exception:
+            # If the page suddenly crashes, exit to let the outside retry work
+            break
         await asyncio.sleep(random.uniform(1.0, 2.5))
     return results
 
@@ -534,18 +640,55 @@ async def run_scrape(lat: float, lon: float, radius_km: int, query: Optional[str
                      storage_state_path: Optional[str]) -> List[Listing]:
     urls = build_urls(lat, lon, radius_km, query, category)
     all_results: Dict[str, Listing] = {}
+    is_headless = bool(headless) or os.getenv("HEADLESS", "").strip().lower() in ("1", "true")
+    launch_args = ["--disable-blink-features=AutomationControlled"]
+    if is_headless:
+        launch_args += ["--disable-dev-shm-usage", "--no-sandbox", "--disable-gpu"]
 
     from playwright.async_api import async_playwright
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=headless, args=["--disable-blink-features=AutomationControlled"])
+        if not is_headless:
+            browser = await p.chromium.launch(
+                headless=False,
+                channel="chrome",          # открывает именно Chrome.app
+                args=launch_args,
+                slow_mo=150,               # немного замедляет — видно, что происходит
+            )
+            logger.info(">>> Headless mode disabled")
+        else:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=launch_args,
+            )
+            logger.info(">>> Headless mode enabled")
         ctx_kwargs = {}
         if storage_state_path and os.path.exists(storage_state_path):
             ctx_kwargs["storage_state"] = storage_state_path
-        context = await browser.new_context(**ctx_kwargs, viewport={"width": 1280, "height": 900})
+            logger.info(f">>> Using existing storage state: {storage_state_path}")
+        context = await browser.new_context(
+            **ctx_kwargs,
+            viewport={"width": 1280, "height": 900},
+            user_agent=(
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            locale="en-US",
+        )
+
+        context.set_default_timeout(30_000)
+        context.set_default_navigation_timeout(45_000)
+
         page = await context.new_page()
+        logger.info(f">>> Opening page: {page.url}")
+        try:
+            await page.bring_to_front()   # вывод окна на передний план
+        except Exception:
+            pass
+        logger.info(f">>> Headless mode: {is_headless}")
 
         if not storage_state_path or not os.path.exists(storage_state_path):
-            print(">>> First run: Please log in to Facebook and return to the console, then press Enter.")
+            logger.info(">>> First run: Please log in to Facebook and return to the console, then press Enter.")
             await page.goto("https://www.facebook.com/login", timeout=120_000)
             try:
                 input()
@@ -555,10 +698,45 @@ async def run_scrape(lat: float, lon: float, radius_km: int, query: Optional[str
                 await context.storage_state(path=storage_state_path)
 
         for u in urls:
-            print(f">>> Opening catalog: {u}")
-            await page.goto(u, timeout=120_000)
-            await asyncio.sleep(random.uniform(2.0, 4.0))
-            batch = await scroll_and_collect(page, target_count=max_items, category_hint=category, source_url=u)
+            logger.info(f">>> Opening catalog: {u}")
+            try:
+                await page.goto(u, timeout=120_000, wait_until="domcontentloaded")
+            except Exception:
+                # Recreate page if crashed
+                if page.is_closed():
+                    page = await context.new_page()
+                await page.goto(u, timeout=120_000, wait_until="domcontentloaded")
+            
+            ready = await ensure_marketplace_ready(page, timeout_ms=15_000)
+            if not ready:
+                # если десктопная версия не дала ни одной карточки — пробуем мобильную m.facebook.com
+                try:
+                    u_mobile = u.replace("://www.facebook.com", "://m.facebook.com")
+                    logger.info(f">>> Desktop view empty; retry mobile: {u_mobile}")
+                    await page.goto(u_mobile, timeout=120_000, wait_until="domcontentloaded")
+                    await asyncio.sleep(random.uniform(1.2, 2.2))
+                    ready = await ensure_marketplace_ready(page, timeout_ms=10_000)
+                except Exception:
+                    logger.exception("Failed to open mobile Marketplace")
+
+            await asyncio.sleep(random.uniform(1.0, 2.0))
+
+            batch: List[Listing] = []
+
+            # soft retry in case of crash during scrolling
+            for attempt in range(2):
+                try:
+                    batch = await scroll_and_collect(
+                        page, target_count=max_items, category_hint=category, source_url=u
+                    )
+                    logger.info(f">>> Collected {len(batch)} items from this URL")
+                    break
+                except Exception:
+                    if page.is_closed():
+                        page = await context.new_page()
+                        await page.goto(u, timeout=120_000, wait_until="domcontentloaded")
+                    if attempt == 1:
+                        raise
             for b in batch:
                 all_results[b.item_id] = b
             if len(all_results) >= max_items:
@@ -567,7 +745,7 @@ async def run_scrape(lat: float, lon: float, radius_km: int, query: Optional[str
         listings = list(all_results.values())[:max_items]
 
         if details and listings:
-            print(f">>> Second pass over {len(listings)} listings...")
+            logger.info(f">>> Second pass over {len(listings)} listings...")
             for i, lst in enumerate(listings, 1):
                 try:
                     listings[i-1] = await extract_details_from_item(page, lst)
@@ -632,7 +810,7 @@ def save_output_rows(listings: List[Listing], out_path: str):
         df.to_excel(out_path, index=False)
     else:
         df.to_csv(out_path, index=False)
-    print(f">>> Saved {len(df)} rows to {out_path}")
+    logger.info(f">>> Saved {len(df)} rows to {out_path}")
 
 def parse_args():
     ap = argparse.ArgumentParser(description="Facebook Marketplace scraper (vehicles/motorcycles) with SQLite & price history")
@@ -651,11 +829,39 @@ def parse_args():
     ap.add_argument("--export-prices", action="store_true", help="Export price_history to CSV/XLSX (uses --out)")
     ap.add_argument("--export-prices-item", type=str, default="", help="Filter price_history by item_id")
     ap.add_argument("--storage-state", type=str, default=STORAGE_STATE_FILE_DEFAULT, help="Path to storage_state.json")
+    # Logging
+    lvl_choices = ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
+    ap.add_argument("--log-level", choices=lvl_choices, default=None,
+                    help="Global log level for both console and file (overrides --log-console/--log-file).")
+    ap.add_argument("--log-console", choices=lvl_choices, default=os.getenv("LOG_CONSOLE", "INFO"),
+                    help="Console log level (default from env LOG_CONSOLE or INFO).")
+    ap.add_argument("--log-file", choices=lvl_choices, default=os.getenv("LOG_FILE", "DEBUG"),
+                    help="File log level (default from env LOG_FILE or DEBUG).")
+    ap.add_argument("--log-file-path", default=os.getenv("LOG_FILE_PATH", "fbmkt.log"),
+                    help="Path to log file (default from env LOG_FILE_PATH or fbmkt.log).")
+    ap.add_argument("--no-file-log", action="store_true",
+                help="Disable file logging (only console output).")
+
+
     return ap.parse_args()
 
 def main():
     args = parse_args()
+    eff_console = args.log_level or args.log_console
+    eff_file = args.log_level or args.log_file
+    global logger
+    logger = init_logger(
+        console_level=eff_console,
+        file_level=eff_file,
+        log_file=None if args.no_file_log else args.log_file_path
+    )
+    logger.info(
+            f"Logger initialized: console={eff_console}, "
+            f"file={'DISABLED' if args.no_file_log else eff_file}, "
+            f"path={'N/A' if args.no_file_log else args.log_file_path}"
+        )
     run_started_iso = now_iso()
+    logger.info(f">>> Run started at {run_started_iso}")
 
     listings = asyncio.run(run_scrape(
         lat=args.lat, lon=args.lon, radius_km=args.radius_km,
@@ -678,7 +884,7 @@ def main():
             new_items += 1
         if price_changed:
             price_changed_count += 1
-    print(f">>> In DB: new items added: {new_items}, price changes: {price_changed_count}")
+    logger.info(f">>> In DB: new items added: {new_items}, price changes: {price_changed_count}")
 
     # Export
     if args.export_prices:
@@ -687,7 +893,7 @@ def main():
             dfp.to_excel(args.out, index=False)
         else:
             dfp.to_csv(args.out, index=False)
-        print(f">>> Export price_history: {len(dfp)} rows -> {args.out}")
+        logger.info(f">>> Export price_history: {len(dfp)} rows -> {args.out}")
     else:
         if args.export_new:
             dfn = export_new_since_run(conn, run_started_iso)
@@ -695,7 +901,7 @@ def main():
                 dfn.to_excel(args.out, index=False)
             else:
                 dfn.to_csv(args.out, index=False)
-            print(f">>> Export only new items: {len(dfn)} rows -> {args.out}")
+            logger.info(f">>> Export only new items: {len(dfn)} rows -> {args.out}")
         else:
             save_output_rows(listings, args.out)
 
