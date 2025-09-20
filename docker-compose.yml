@@ -1,0 +1,44 @@
+services:
+  scraper:
+    build:
+      context: ./scraper
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - HEADLESS=${HEADLESS:-1}
+      - LAT=${LAT}
+      - LON=${LON}
+      - RADIUS_KM=${RADIUS_KM}
+      - CATEGORY=${CATEGORY}
+      - QUERY=${QUERY}
+      - MAX_ITEMS=${MAX_ITEMS}
+      - DETAILS=${DETAILS}
+      - DB_PATH=${DB_PATH}
+      - STORAGE_STATE_FILE=${STORAGE_STATE_FILE}
+      - OUT_PATH=${OUT_PATH}
+      - LOG_CONSOLE=${LOG_CONSOLE}
+      - LOG_FILE=${LOG_FILE}
+      - LOG_FILE_PATH=${LOG_FILE_PATH}
+    volumes:
+      - ./data:/data
+      - ./scraper:/app/scraper:ro
+    working_dir: /app/scraper
+    entrypoint: ["/bin/bash","-lc","/app/scraper/entrypoint.sh"]
+
+  api:
+    build:
+      context: ./api
+      dockerfile: Dockerfile
+    env_file: .env
+    environment:
+      - FB_DB=${FB_DB}
+      - LOG_CONSOLE=${LOG_CONSOLE}
+      - LOG_FILE=${LOG_FILE}
+      - LOG_FILE_PATH=${LOG_FILE_PATH}
+    volumes:
+      - ./data:/data
+      - ./api:/app/api:ro
+    working_dir: /app/api
+    ports:
+      - "${API_PORT:-8000}:8000"
+    command: ["uvicorn","app:app","--host","0.0.0.0","--port","8000"]
