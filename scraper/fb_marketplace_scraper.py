@@ -8,10 +8,10 @@ import argparse
 import asyncio
 import os
 
-from .core import run_scrape
-from .database import db_connect, db_init, upsert_with_price_history
-from .export import export_new_since_run, export_price_history, save_output_rows
-from .utils import init_logger, now_iso
+from core import run_scrape
+from database import db_connect, db_init, upsert_with_price_history
+from export import export_new_since_run, export_price_history, save_output_rows
+from utils import init_logger, now_iso
 
 STORAGE_STATE_FILE_DEFAULT = "storage_state.json"
 

@@ -10,8 +10,8 @@ from typing import List, Dict, Set, Optional
 
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
-from .models import Listing
-from .utils import clean_text, parse_price, to_float, extract_first_number_km
+from models import Listing
+from utils import clean_text, parse_price, to_float, extract_first_number_km
 
 
 # Constants

@@ -8,14 +8,14 @@ from typing import List, Optional, Dict
 
 from playwright.async_api import async_playwright
 
-from .models import Listing
-from .scraper import (
+from models import Listing
+from scraper import (
     ensure_marketplace_ready, 
     scroll_and_collect, 
     extract_details_from_item,
     STORAGE_STATE_FILE_DEFAULT
 )
-from .utils import build_urls
+from utils import build_urls
 
 
 async def run_scrape(

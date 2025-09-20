@@ -6,8 +6,8 @@ import os
 import sqlite3
 from typing import Optional, Dict, Tuple
 
-from .models import Listing
-from .utils import now_iso
+from models import Listing
+from utils import now_iso
 
 
 # Schema definitions

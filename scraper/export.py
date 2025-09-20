@@ -7,7 +7,7 @@ from typing import List, Optional
 
 import pandas as pd
 
-from .models import Listing
+from models import Listing
 
 
 def export_new_since_run(conn: sqlite3.Connection, run_started_iso: str) -> pd.DataFrame:
