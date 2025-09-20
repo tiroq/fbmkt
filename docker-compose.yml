@@ -24,6 +24,12 @@ services:
       - ./scraper:/app/scraper:ro
     working_dir: /app/scraper
     entrypoint: ["/bin/bash","-lc","/app/scraper/entrypoint.sh"]
+  scheduler:
+    image: alpine:3.20
+    volumes:
+      - ./scripts:/scripts
+      - ./data:/data
+    entrypoint: ["sh", "-c", "while true; do /scripts/run_scraper.sh; sleep 3600; done"]
 
   api:
     build:
@@ -41,4 +47,9 @@ services:
     working_dir: /app/api
     ports:
       - "${API_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/items"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
     command: ["uvicorn","app:app","--host","0.0.0.0","--port","8000"]
