@@ -139,9 +139,41 @@ async def ui_table(
             
             html_parts.append('<tr>')
             
-            # Photo
+            # Photo with enhanced thumbnail and count
             thumb = listing.get('thumbnail_url', '')
-            html_parts.append(f'<td class="px-3 py-2"><img src="{thumb}" class="w-20 h-14 object-cover rounded"/></td>')
+            img_urls = listing.get('img_urls', '')
+            images = [url.strip() for url in img_urls.split('|') if url.strip()] if img_urls else []
+            image_count = len(images)
+            
+            if thumb:  # Show thumbnail if it exists, regardless of additional images
+                detail_url = f'/detail/{item_id}'
+                html_parts.append(f'''<td class="px-3 py-2">
+<div class="relative group">
+<img src="{thumb}" 
+     class="w-20 h-14 object-cover rounded shadow-sm cursor-pointer transition-transform group-hover:scale-105" 
+     loading="lazy"
+     onerror="this.style.display='none'; this.nextElementSibling.style.display='block'"
+     onclick="window.open('{detail_url}', '_blank')"
+     alt="Thumbnail"/>
+<div class="w-20 h-14 bg-slate-100 rounded shadow-sm hidden items-center justify-center text-slate-400 text-xs">No image</div>''')
+                
+                # Add image count badge if more than 1 image
+                if image_count > 1:
+                    html_parts.append(f'<span class="absolute top-1 right-1 bg-black/70 text-white text-xs px-1.5 py-0.5 rounded">{image_count}</span>')
+                
+                html_parts.append('''<div class="absolute inset-0 bg-black/0 group-hover:bg-black/20 rounded transition-colors flex items-center justify-center">
+<svg class="w-4 h-4 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="currentColor" viewBox="0 0 20 20">
+<path fill-rule="evenodd" d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z" clip-rule="evenodd"></path>
+</svg>
+</div>
+</div>
+</td>''')
+            else:
+                detail_url = f'/detail/{item_id}'
+                html_parts.append(f'''<td class="px-3 py-2">
+<div class="w-20 h-14 bg-slate-100 rounded shadow-sm flex items-center justify-center text-slate-400 text-xs cursor-pointer" 
+     onclick="window.open('{detail_url}', '_blank')">No photo</div>
+</td>''')
             
             # Title
             html_parts.append(f'<td class="px-3 py-2">')
@@ -300,12 +332,34 @@ async def detail_page(item_id: str):
 <div class='text-lg mt-1'>Price: <b>{price_text or '—'}</b></div>
 <div class='text-slate-600 text-sm'>Last seen: {listing.get('last_seen', '')}</div>'''
         
-        # Images
-        if images:
-            html += '<div class="grid grid-cols-2 md:grid-cols-4 gap-2 my-4">'
-            for img_url in images[:12]:
-                html += f'<img class="rounded-lg shadow w-full h-40 object-cover" src="{img_url}"/>'
-            html += '</div>'
+        # Images with enhanced gallery
+        thumbnail_url = listing.get('thumbnail_url', '')
+        display_images = images.copy() if images else []
+        
+        # If we have a thumbnail but no additional images, use the thumbnail
+        if thumbnail_url and not display_images:
+            display_images = [thumbnail_url]
+        
+        if display_images:
+            html += '''<div class="my-6">
+<h3 class="text-lg font-medium mb-3">Photos</h3>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-3">'''
+            for i, img_url in enumerate(display_images[:16]):
+                html += f'''<div class="relative group cursor-pointer" onclick="openImageModal({i})">
+<img class="rounded-lg shadow-md w-full h-32 md:h-40 object-cover transition-transform group-hover:scale-105" 
+     src="{img_url}" 
+     loading="lazy"
+     onerror="this.parentElement.style.display='none'"
+     alt="Vehicle photo {i+1}"/>
+<div class="absolute inset-0 bg-black/0 group-hover:bg-black/20 rounded-lg transition-colors flex items-center justify-center">
+<svg class="w-6 h-6 text-white opacity-0 group-hover:opacity-100 transition-opacity" fill="currentColor" viewBox="0 0 20 20">
+<path fill-rule="evenodd" d="M3 4a1 1 0 011-1h12a1 1 0 011 1v12a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm5 3a1 1 0 00-1 1v1a1 1 0 002 0V9h1a1 1 0 000-2H8zm4 0a1 1 0 00-1 1v1a1 1 0 002 0V9h1a1 1 0 000-2h-1z" clip-rule="evenodd"></path>
+</svg>
+</div>
+</div>'''
+            if len(display_images) > 16:
+                html += f'<div class="flex items-center justify-center text-slate-500 bg-slate-100 rounded-lg h-32 md:h-40">+{len(display_images)-16} more</div>'
+            html += '</div></div>'
         
         # Specs and description
         html += '<div class="grid grid-cols-1 md:grid-cols-3 gap-4">'
@@ -347,28 +401,100 @@ async def detail_page(item_id: str):
 <button onclick="openPriceHistory('{item_id}')" class="px-3 py-2 border rounded">Show price history</button>
 </div>'''
         
-        # Modal and JavaScript
-        html += '''
-<div id='modal' class='fixed inset-0 bg-black/40 hidden items-center justify-center p-4'>
+        # Modal and JavaScript with Image Gallery
+        html += f'''
+<!-- Price History Modal -->
+<div id='priceModal' class='fixed inset-0 bg-black/40 hidden items-center justify-center p-4 z-50'>
 <div class='bg-white rounded-xl shadow-xl w-full max-w-2xl p-4'>
 <div class='flex justify-between items-center mb-2'>
 <h2 class='text-lg font-semibold'>Price history</h2>
-<button onclick="document.getElementById('modal').classList.add('hidden')" class='text-slate-500'>✕</button>
+<button onclick="document.getElementById('priceModal').classList.add('hidden')" class='text-slate-500 hover:text-slate-700'>✕</button>
 </div>
 <canvas id='priceChart'></canvas>
 </div></div>
+
+<!-- Image Gallery Modal -->
+<div id='imageModal' class='fixed inset-0 bg-black/90 hidden items-center justify-center p-4 z-50'>
+<div class='relative w-full h-full flex items-center justify-center'>
+<button onclick="document.getElementById('imageModal').classList.add('hidden')" 
+        class='absolute top-4 right-4 text-white text-2xl hover:text-gray-300 z-10'>✕</button>
+<button onclick="prevImage()" class='absolute left-4 text-white text-3xl hover:text-gray-300 z-10'>‹</button>
+<button onclick="nextImage()" class='absolute right-4 text-white text-3xl hover:text-gray-300 z-10'>›</button>
+<img id='modalImage' class='max-w-full max-h-full object-contain rounded-lg' src='' alt=''>
+<div class='absolute bottom-4 left-1/2 transform -translate-x-1/2 text-white text-sm bg-black/50 px-3 py-1 rounded'>
+<span id='imageCounter'>1 / 1</span>
+</div>
+</div></div>
+
 <script>
-async function openPriceHistory(id){
-  const r=await fetch(`/api/listings/${encodeURIComponent(id)}/price-history`);
-  const d=await r.json();
-  const labels=d.map(p=>new Date(p.ts).toLocaleString());
-  const values=d.map(p=>p.price_value);
-  const m=document.getElementById('modal');
-  m.classList.remove('hidden');
-  const ctx=document.getElementById('priceChart').getContext('2d');
-  if(window.__chart)window.__chart.destroy();
-  window.__chart=new Chart(ctx,{type:'line',data:{labels,datasets:[{label:'Price',data:values}]}});
-}
+const images = {json.dumps(display_images)};
+let currentImageIndex = 0;
+
+function openImageModal(index) {{
+    currentImageIndex = index;
+    const modal = document.getElementById('imageModal');
+    const modalImage = document.getElementById('modalImage');
+    const counter = document.getElementById('imageCounter');
+    
+    modalImage.src = images[currentImageIndex];
+    counter.textContent = `${{currentImageIndex + 1}} / ${{images.length}}`;
+    modal.classList.remove('hidden');
+}}
+
+function nextImage() {{
+    currentImageIndex = (currentImageIndex + 1) % images.length;
+    document.getElementById('modalImage').src = images[currentImageIndex];
+    document.getElementById('imageCounter').textContent = `${{currentImageIndex + 1}} / ${{images.length}}`;
+}}
+
+function prevImage() {{
+    currentImageIndex = (currentImageIndex - 1 + images.length) % images.length;
+    document.getElementById('modalImage').src = images[currentImageIndex];
+    document.getElementById('imageCounter').textContent = `${{currentImageIndex + 1}} / ${{images.length}}`;
+}}
+
+// Keyboard navigation
+document.addEventListener('keydown', function(e) {{
+    const imageModal = document.getElementById('imageModal');
+    if (!imageModal.classList.contains('hidden')) {{
+        if (e.key === 'ArrowLeft') prevImage();
+        if (e.key === 'ArrowRight') nextImage();
+        if (e.key === 'Escape') imageModal.classList.add('hidden');
+    }}
+}});
+
+async function openPriceHistory(id){{
+  try {{
+    const r=await fetch(`/api/listings/${{encodeURIComponent(id)}}/price-history`);
+    const d=await r.json();
+    const labels=d.map(p=>new Date(p.ts).toLocaleString());
+    const values=d.map(p=>p.price_value);
+    const m=document.getElementById('priceModal');
+    m.classList.remove('hidden');
+    const ctx=document.getElementById('priceChart').getContext('2d');
+    if(window.__chart)window.__chart.destroy();
+    window.__chart=new Chart(ctx,{{
+      type:'line',
+      data:{{
+        labels,
+        datasets:[{{
+          label:'Price',
+          data:values,
+          borderColor:'rgb(75, 192, 192)',
+          tension:0.1
+        }}]
+      }},
+      options:{{
+        responsive:true,
+        scales:{{
+          y:{{beginAtZero:false}}
+        }}
+      }}
+    }});
+  }} catch(e) {{
+    alert('Failed to load price history');
+  }}
+}}
 </script>
 </div>
 </body></html>'''
